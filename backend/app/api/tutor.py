@@ -10,6 +10,11 @@ from app.services.rag_service import process_and_store_pdf, retrieve_context, ge
 import tempfile
 import shutil
 from fastapi import UploadFile, File, Form
+from app.services.memory_service import (
+    get_student_profile, get_topic_memory,
+    update_mastery_detailed, build_personalized_context,
+    record_learning_event
+)
 
 router = APIRouter()
 
@@ -45,31 +50,6 @@ def get_student_level(student_id: int, topic: str, db: Session) -> str:
         return "intermediate"
     return "beginner"
 
-def update_mastery(student_id: int, topic: str, understanding: str, db: Session):
-    delta = {
-        "none": -0.05,
-        "partial": 0.05,
-        "good": 0.1,
-        "excellent": 0.15
-    }.get(understanding, 0)
-
-    mastery = db.query(MasteryScore).filter(
-        MasteryScore.student_id == student_id,
-        MasteryScore.topic == topic
-    ).first()
-
-    if mastery:
-        mastery.score = max(0.0, min(1.0, mastery.score + delta))
-        mastery.updated_at = datetime.utcnow()
-    else:
-        mastery = MasteryScore(
-            student_id=student_id,
-            topic=topic,
-            score=max(0.0, 0.5 + delta)
-        )
-        db.add(mastery)
-
-    db.commit()
 
 # ── Routes ───────────────────────────────────────────────
 
@@ -141,12 +121,20 @@ def evaluate_answer(request: EvaluateAnswerRequest, db: Session = Depends(get_db
         student_response=request.student_response,
         misconception_detected=evaluation["misconception_detected"],
         misconception_type=evaluation.get("misconception_type"),
-        feedback=evaluation["feedback"]
+        feedback=evaluation["feedback"],
+        understanding_level=evaluation["understanding_level"]
     )
     db.add(answer)
     db.commit()
 
-    update_mastery(request.student_id, question.topic, evaluation["understanding_level"], db)
+    # Use detailed mastery update with memory
+    update_mastery_detailed(
+        request.student_id,
+        question.topic,
+        evaluation["understanding_level"],
+        evaluation["misconception_detected"],
+        db
+    )
 
     return {
         "feedback": evaluation["feedback"],
@@ -155,7 +143,6 @@ def evaluate_answer(request: EvaluateAnswerRequest, db: Session = Depends(get_db
         "misconception_type": evaluation.get("misconception_type"),
         "follow_up_needed": evaluation["follow_up_needed"]
     }
-
 
 @router.get("/student-progress/{student_id}")
 def get_student_progress(student_id: int, db: Session = Depends(get_db)):
@@ -214,18 +201,27 @@ def rag_stats():
 
 @router.post("/generate-question-rag")
 def generate_question_rag(request: GenerateQuestionRequest, db: Session = Depends(get_db)):
-    """Generate a Socratic question grounded in uploaded learning material."""
+    """Generate a Socratic question grounded in uploaded learning material + student memory."""
     student = db.query(Student).filter(Student.id == request.student_id).first()
     if not student:
         raise HTTPException(status_code=404, detail="Student not found")
 
     student_level = get_student_level(request.student_id, request.topic, db)
 
-    # Retrieve relevant context from ChromaDB
-    context = retrieve_context(request.topic, request.topic)
+    # Get RAG context from documents
+    rag_context = retrieve_context(request.topic, request.topic)
 
-    # Generate question with context
-    question_text = generate_socratic_question(request.topic, student_level, context)
+    # Get personalized context from student memory
+    personal_context = build_personalized_context(request.student_id, request.topic, db)
+
+    # Combine both contexts
+    combined_context = ""
+    if rag_context:
+        combined_context += f"LEARNING MATERIAL:\n{rag_context}"
+    if personal_context:
+        combined_context += f"\n\nSTUDENT PROFILE:\n{personal_context}"
+
+    question_text = generate_socratic_question(request.topic, student_level, combined_context)
 
     if request.session_id:
         session = db.query(SessionModel).filter(SessionModel.id == request.session_id).first()
@@ -251,6 +247,22 @@ def generate_question_rag(request: GenerateQuestionRequest, db: Session = Depend
         "question": question_text,
         "student_level": student_level,
         "topic": request.topic,
-        "rag_used": bool(context),
-        "context_preview": context[:200] + "..." if context else None
+        "rag_used": bool(rag_context),
+        "personalized": bool(personal_context),
+        "context_preview": rag_context[:200] + "..." if rag_context else None
     }
+
+@router.get("/student-profile/{student_id}")
+def get_profile(student_id: int, db: Session = Depends(get_db)):
+    """Get detailed student learning profile."""
+    profile = get_student_profile(student_id, db)
+    if not profile:
+        raise HTTPException(status_code=404, detail="Student not found")
+    return profile
+
+
+@router.get("/topic-memory/{student_id}/{topic}")
+def get_memory(student_id: int, topic: str, db: Session = Depends(get_db)):
+    """Get student's memory for a specific topic."""
+    memory = get_topic_memory(student_id, topic, db)
+    return memory
