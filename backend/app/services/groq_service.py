@@ -1,4 +1,5 @@
 import os
+import json
 from groq import Groq
 from dotenv import load_dotenv
 
@@ -6,19 +7,17 @@ load_dotenv()
 
 client = Groq(api_key=os.getenv("GROQ_API_KEY"))
 
-def generate_socratic_question(topic: str, student_level: str, context: str = "") -> str:
-    """
-    Generate a Socratic question based on topic and student level.
-    Never reveals the answer directly.
-    """
+MODEL = "llama-3.3-70b-versatile"
 
+
+def generate_socratic_question(topic: str, student_level: str, context: str = "") -> str:
     level_instruction = {
         "beginner": "Ask a simple foundational question to build basic understanding.",
         "intermediate": "Ask a question that connects concepts and encourages deeper thinking.",
         "advanced": "Ask a challenging question that requires synthesis and critical analysis."
     }.get(student_level, "Ask a standard Socratic question.")
 
-    context_block = f"\n\nRelevant context from learning material:\n{context}" if context else ""
+    context_block = f"\n\nUse this context from learning material to ground your question:\n{context}" if context else ""
 
     prompt = f"""You are a Socratic tutor. Your job is to guide students to discover answers themselves.
 
@@ -27,6 +26,7 @@ RULES:
 - Ask ONE clear question that guides the student toward understanding
 - Be encouraging and curious
 - Keep the question concise (1-2 sentences max)
+- If context is provided, base your question on that material
 
 Topic: {topic}
 Student Level: {student_level}
@@ -35,7 +35,7 @@ Instruction: {level_instruction}{context_block}
 Generate only the Socratic question, nothing else:"""
 
     response = client.chat.completions.create(
-        model="llama-3.3-70b-versatile",
+        model=MODEL,
         messages=[{"role": "user", "content": prompt}],
         temperature=0.7,
         max_tokens=150
@@ -45,11 +45,6 @@ Generate only the Socratic question, nothing else:"""
 
 
 def evaluate_student_response(question: str, student_response: str, topic: str) -> dict:
-    """
-    Evaluate student response and detect misconceptions.
-    Returns feedback and misconception info.
-    """
-
     prompt = f"""You are an educational AI evaluating a student's response.
 
 Topic: {topic}
@@ -68,16 +63,15 @@ Analyze the response and return a JSON object with exactly these fields:
 Return only the JSON, no extra text:"""
 
     response = client.chat.completions.create(
-        model="llama-3.3-70b-versatile",
+        model=MODEL,
         messages=[{"role": "user", "content": prompt}],
         temperature=0.3,
         max_tokens=300
     )
 
-    import json
     try:
         result = json.loads(response.choices[0].message.content.strip())
-    except:
+    except Exception:
         result = {
             "understanding_level": "partial",
             "misconception_detected": False,

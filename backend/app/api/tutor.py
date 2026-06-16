@@ -1,3 +1,4 @@
+import os
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from pydantic import BaseModel
@@ -5,6 +6,10 @@ from typing import Optional
 from app.models.database import get_db, Student, Session as SessionModel, Question, Answer, MasteryScore
 from app.services.groq_service import generate_socratic_question, evaluate_student_response
 from datetime import datetime
+from app.services.rag_service import process_and_store_pdf, retrieve_context, get_collection_stats
+import tempfile
+import shutil
+from fastapi import UploadFile, File, Form
 
 router = APIRouter()
 
@@ -167,4 +172,85 @@ def get_student_progress(student_id: int, db: Session = Depends(get_db)):
         "mastery_scores": [
             {"topic": m.topic, "score": round(m.score, 2)} for m in mastery_scores
         ]
+    }
+
+@router.post("/upload-pdf")
+async def upload_pdf(
+    file: UploadFile = File(...),
+    topic: str = Form(...)
+):
+    """Upload a PDF and store it in ChromaDB for RAG."""
+    # Accept any file with pdf content type or .pdf extension
+    filename = file.filename or ""
+    content_type = file.content_type or ""
+    
+    if not (filename.lower().endswith(".pdf") or "pdf" in content_type.lower()):
+        raise HTTPException(status_code=400, detail=f"Only PDF files are supported. Got: {filename}, type: {content_type}")
+
+    contents = await file.read()
+    
+    if len(contents) == 0:
+        raise HTTPException(status_code=400, detail="File is empty")
+
+    with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
+        tmp.write(contents)
+        tmp_path = tmp.name
+
+    try:
+        result = process_and_store_pdf(tmp_path, topic)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Processing error: {str(e)}")
+    finally:
+        os.unlink(tmp_path)
+
+    return result
+
+
+@router.get("/rag-stats")
+def rag_stats():
+    """Get RAG collection statistics."""
+    return get_collection_stats()
+
+
+@router.post("/generate-question-rag")
+def generate_question_rag(request: GenerateQuestionRequest, db: Session = Depends(get_db)):
+    """Generate a Socratic question grounded in uploaded learning material."""
+    student = db.query(Student).filter(Student.id == request.student_id).first()
+    if not student:
+        raise HTTPException(status_code=404, detail="Student not found")
+
+    student_level = get_student_level(request.student_id, request.topic, db)
+
+    # Retrieve relevant context from ChromaDB
+    context = retrieve_context(request.topic, request.topic)
+
+    # Generate question with context
+    question_text = generate_socratic_question(request.topic, student_level, context)
+
+    if request.session_id:
+        session = db.query(SessionModel).filter(SessionModel.id == request.session_id).first()
+    else:
+        session = SessionModel(student_id=request.student_id, topic=request.topic)
+        db.add(session)
+        db.commit()
+        db.refresh(session)
+
+    question = Question(
+        session_id=session.id,
+        question_text=question_text,
+        question_type=student_level,
+        topic=request.topic
+    )
+    db.add(question)
+    db.commit()
+    db.refresh(question)
+
+    return {
+        "question_id": question.id,
+        "session_id": session.id,
+        "question": question_text,
+        "student_level": student_level,
+        "topic": request.topic,
+        "rag_used": bool(context),
+        "context_preview": context[:200] + "..." if context else None
     }
