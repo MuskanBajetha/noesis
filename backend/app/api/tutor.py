@@ -16,6 +16,7 @@ from app.services.memory_service import (
     update_mastery_detailed, build_personalized_context,
     record_learning_event
 )
+from app.services.knowledge_tracing import knowledge_tracer
 
 router = APIRouter()
 
@@ -296,3 +297,32 @@ def misconception_analytics(student_id: int, db: Session = Depends(get_db)):
             for h in history[-5:]
         ]
     }
+
+@router.get("/knowledge-state/{student_id}")
+def get_knowledge_state(student_id: int, db: Session = Depends(get_db)):
+    """Get DKT-estimated mastery probabilities for all topics."""
+    student = db.query(Student).filter(Student.id == student_id).first()
+    if not student:
+        raise HTTPException(status_code=404, detail="Student not found")
+
+    mastery = knowledge_tracer.get_student_mastery(student_id, db)
+    recommendations = knowledge_tracer.get_next_topic_recommendation(mastery)
+
+    return {
+        "student_id": student_id,
+        "student_name": student.name,
+        "mastery_probabilities": mastery,
+        "recommendations": recommendations,
+        "timestamp": datetime.utcnow().isoformat()
+    }
+
+
+@router.post("/train-dkt/{student_id}")
+def train_dkt(student_id: int, db: Session = Depends(get_db)):
+    """Train/update DKT model on student interaction data."""
+    student = db.query(Student).filter(Student.id == student_id).first()
+    if not student:
+        raise HTTPException(status_code=404, detail="Student not found")
+
+    result = knowledge_tracer.train_on_student_data(student_id, db)
+    return result
