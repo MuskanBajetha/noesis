@@ -92,7 +92,8 @@ def update_mastery_detailed(
     topic: str,
     understanding: str,
     misconception_detected: bool,
-    db: Session
+    db: Session,
+    misconception_type: str = None
 ):
     """Update mastery score with detailed tracking."""
     delta = {
@@ -129,7 +130,7 @@ def update_mastery_detailed(
                               f"Excellent understanding demonstrated", db)
     elif misconception_detected:
         record_learning_event(student_id, topic, "misconception",
-                              f"Misconception detected during {topic} session", db)
+                      f"misconception_type:{misconception_type or 'unknown'}", db)
     elif understanding == "none":
         record_learning_event(student_id, topic, "struggle",
                               f"Student struggling with {topic}", db)

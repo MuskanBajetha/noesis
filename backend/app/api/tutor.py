@@ -1,9 +1,10 @@
 import os
+from app.services.misconception_service import get_misconception_analytics
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from pydantic import BaseModel
 from typing import Optional
-from app.models.database import get_db, Student, Session as SessionModel, Question, Answer, MasteryScore
+from app.models.database import get_db, Student, Session as SessionModel, Question, Answer, MasteryScore, LearningHistory
 from app.services.groq_service import generate_socratic_question, evaluate_student_response
 from datetime import datetime
 from app.services.rag_service import process_and_store_pdf, retrieve_context, get_collection_stats
@@ -133,7 +134,8 @@ def evaluate_answer(request: EvaluateAnswerRequest, db: Session = Depends(get_db
         question.topic,
         evaluation["understanding_level"],
         evaluation["misconception_detected"],
-        db
+        db,
+        misconception_type=evaluation.get("misconception_type")
     )
 
     return {
@@ -266,3 +268,31 @@ def get_memory(student_id: int, topic: str, db: Session = Depends(get_db)):
     """Get student's memory for a specific topic."""
     memory = get_topic_memory(student_id, topic, db)
     return memory
+
+@router.get("/misconception-analytics/{student_id}")
+def misconception_analytics(student_id: int, db: Session = Depends(get_db)):
+    """Get misconception analytics for a student."""
+    history = db.query(LearningHistory).filter(
+        LearningHistory.student_id == student_id,
+        LearningHistory.event_type == "misconception"
+    ).all()
+
+    misconceptions = [{"misconception_type": h.description, "topic": h.topic} for h in history]
+    analytics = get_misconception_analytics(misconceptions)
+
+    # Group by topic
+    by_topic = {}
+    for h in history:
+        if h.topic not in by_topic:
+            by_topic[h.topic] = 0
+        by_topic[h.topic] += 1
+
+    return {
+        "total_misconceptions": len(history),
+        "analytics": analytics,
+        "by_topic": by_topic,
+        "recent": [
+            {"topic": h.topic, "description": h.description, "date": h.created_at}
+            for h in history[-5:]
+        ]
+    }

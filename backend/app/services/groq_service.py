@@ -45,39 +45,70 @@ Generate only the Socratic question, nothing else:"""
 
 
 def evaluate_student_response(question: str, student_response: str, topic: str) -> dict:
-    prompt = f"""You are an educational AI evaluating a student's response.
+    """
+    Evaluate student response using enhanced misconception detection.
+    """
+    from app.services.misconception_service import detect_misconceptions_detailed, generate_targeted_followup
+
+    # Run misconception detection
+    misconception_data = detect_misconceptions_detailed(student_response, topic, question)
+
+    # Generate targeted follow-up if misconception found
+    follow_up_question = None
+    if misconception_data["misconception_detected"] and misconception_data.get("teaching_strategy"):
+        follow_up_question = generate_targeted_followup(
+            misconception_data.get("misconception_type", ""),
+            topic,
+            misconception_data.get("teaching_strategy", "")
+        )
+
+    # Generate feedback
+    prompt = f"""You are a Socratic tutor giving feedback.
 
 Topic: {topic}
-Question Asked: {question}
+Question: {question}
 Student Response: {student_response}
+Misconception Detected: {misconception_data["misconception_detected"]}
+{"Misconception: " + str(misconception_data.get("misconception_type")) if misconception_data["misconception_detected"] else ""}
 
-Analyze the response and return a JSON object with exactly these fields:
-{{
-  "understanding_level": "none/partial/good/excellent",
-  "misconception_detected": true/false,
-  "misconception_type": "describe the misconception or null",
-  "feedback": "encouraging feedback that guides without giving the answer",
-  "follow_up_needed": true/false
-}}
+Write encouraging feedback (2-3 sentences) that:
+- Acknowledges what they got right
+- Gently hints at what needs more thought WITHOUT giving the answer
+- Ends with encouragement
 
-Return only the JSON, no extra text:"""
+Return only the feedback text:"""
 
     response = client.chat.completions.create(
         model=MODEL,
         messages=[{"role": "user", "content": prompt}],
-        temperature=0.3,
-        max_tokens=300
+        temperature=0.5,
+        max_tokens=200
     )
 
-    try:
-        result = json.loads(response.choices[0].message.content.strip())
-    except Exception:
-        result = {
-            "understanding_level": "partial",
-            "misconception_detected": False,
-            "misconception_type": None,
-            "feedback": "Good thinking! Let's explore this further.",
-            "follow_up_needed": True
-        }
+    feedback = response.choices[0].message.content.strip()
 
-    return result
+    # Determine understanding level
+    confidence = misconception_data.get("confidence", 0)
+    severity = misconception_data.get("severity")
+
+    if misconception_data["misconception_detected"] and severity == "major":
+        understanding_level = "none"
+    elif misconception_data["misconception_detected"] and severity == "moderate":
+        understanding_level = "partial"
+    elif misconception_data["misconception_detected"] and severity == "minor":
+        understanding_level = "good"
+    else:
+        understanding_level = "excellent" if len(student_response.split()) > 15 else "good"
+
+    return {
+        "understanding_level": understanding_level,
+        "misconception_detected": misconception_data["misconception_detected"],
+        "misconception_type": misconception_data.get("misconception_type"),
+        "misconception_description": misconception_data.get("misconception_description"),
+        "severity": misconception_data.get("severity"),
+        "related_misconceptions": misconception_data.get("related_misconceptions", []),
+        "teaching_strategy": misconception_data.get("teaching_strategy"),
+        "follow_up_question": follow_up_question,
+        "feedback": feedback,
+        "follow_up_needed": True
+    }
