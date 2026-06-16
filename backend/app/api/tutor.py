@@ -17,6 +17,8 @@ from app.services.memory_service import (
     record_learning_event
 )
 from app.services.knowledge_tracing import knowledge_tracer
+from app.services.adaptive_engine import generate_adaptive_question, get_session_analytics
+from app.services.evaluation import generate_full_evaluation_report, calculate_learning_gain
 
 router = APIRouter()
 
@@ -326,3 +328,57 @@ def train_dkt(student_id: int, db: Session = Depends(get_db)):
 
     result = knowledge_tracer.train_on_student_data(student_id, db)
     return result
+
+@router.post("/generate-question-adaptive")
+def generate_question_adaptive(request: GenerateQuestionRequest, db: Session = Depends(get_db)):
+    """Generate a fully adaptive question using DKT + RAG + Memory."""
+    student = db.query(Student).filter(Student.id == request.student_id).first()
+    if not student:
+        raise HTTPException(status_code=404, detail="Student not found")
+
+    result = generate_adaptive_question(
+        request.student_id, request.topic, db, request.session_id
+    )
+
+    # Save question to DB
+    if request.session_id:
+        session = db.query(SessionModel).filter(SessionModel.id == request.session_id).first()
+    else:
+        session = SessionModel(student_id=request.student_id, topic=request.topic)
+        db.add(session)
+        db.commit()
+        db.refresh(session)
+
+    question = Question(
+        session_id=session.id,
+        question_text=result["question"],
+        question_type=result["adaptive_level"],
+        topic=request.topic
+    )
+    db.add(question)
+    db.commit()
+    db.refresh(question)
+
+    return {
+        "question_id": question.id,
+        "session_id": session.id,
+        **result
+    }
+
+
+@router.get("/evaluation-report/{student_id}")
+def evaluation_report(student_id: int, db: Session = Depends(get_db)):
+    """Generate complete evaluation report for a student."""
+    return generate_full_evaluation_report(student_id, db)
+
+
+@router.get("/session-analytics/{session_id}")
+def session_analytics(session_id: int, db: Session = Depends(get_db)):
+    """Get analytics for a specific session."""
+    return get_session_analytics(session_id, db)
+
+
+@router.get("/learning-gain/{student_id}/{topic}")
+def learning_gain(student_id: int, topic: str, db: Session = Depends(get_db)):
+    """Calculate learning gain for a student on a topic."""
+    return calculate_learning_gain(student_id, topic, db)
