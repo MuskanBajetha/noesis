@@ -1,5 +1,5 @@
 from sqlalchemy.orm import Session
-from app.models.database import MasteryScore, LearningHistory, Answer, Question
+from app.models.database import MasteryScore, LearningHistory, Answer, Question, Session as SessionModel
 from app.services.knowledge_tracing import knowledge_tracer
 from app.services.rag_service import retrieve_context
 from app.services.memory_service import build_personalized_context
@@ -136,4 +136,132 @@ def get_session_analytics(session_id: int, db: Session) -> dict:
         "misconception_types": list(set(misconceptions)),
         "session_score": round(score, 2),
         "performance": "excellent" if score >= 0.8 else "good" if score >= 0.5 else "needs_work"
+    }
+
+# ── Concept Relationship Map ─────────────────────────────
+
+CONCEPT_RELATIONSHIPS = {
+    "Newton's Laws": ["Gravity", "Thermodynamics"],
+    "Gravity": ["Newton's Laws", "Quantum Physics"],
+    "Photosynthesis": ["Cell Division", "Evolution"],
+    "Cell Division": ["Photosynthesis", "Evolution"],
+    "Algebra": ["Quantum Physics", "Newton's Laws"],
+    "Thermodynamics": ["Newton's Laws", "Quantum Physics"],
+    "Evolution": ["Photosynthesis", "Cell Division"],
+    "Quantum Physics": ["Gravity", "Algebra", "Thermodynamics"],
+    "Radar": ["Newton's Laws", "Quantum Physics"],
+}
+
+
+def get_concept_graph(student_id: int, db: Session) -> dict:
+    """
+    Build a node graph of concept relationships,
+    annotated with the student's mastery for each node.
+    """
+    mastery_map = knowledge_tracer.get_student_mastery(student_id, db)
+
+    db_mastery = {
+        m.topic: m.score
+        for m in db.query(MasteryScore).filter(MasteryScore.student_id == student_id).all()
+    }
+
+    # Get session counts per topic for node sizing
+    from app.models.database import Session as SessionModel
+    session_counts = {}
+    sessions = db.query(SessionModel).filter(SessionModel.student_id == student_id).all()
+    for s in sessions:
+        session_counts[s.topic] = session_counts.get(s.topic, 0) + 1
+
+    nodes = []
+    for topic in CONCEPT_RELATIONSHIPS.keys():
+        mastery = db_mastery.get(topic, mastery_map.get(topic, 0.5))
+        nodes.append({
+            "id": topic,
+            "mastery": round(mastery, 2),
+            "sessions": session_counts.get(topic, 0),
+            "studied": topic in db_mastery,
+            "status": (
+                "mastered" if mastery >= 0.8 else
+                "learning" if mastery >= 0.4 else
+                "struggling" if topic in db_mastery else "unexplored"
+            )
+        })
+
+    edges = []
+    seen_pairs = set()
+    for topic, related in CONCEPT_RELATIONSHIPS.items():
+        for r in related:
+            pair = tuple(sorted([topic, r]))
+            if pair not in seen_pairs:
+                seen_pairs.add(pair)
+                edges.append({"source": topic, "target": r})
+
+    return {"nodes": nodes, "edges": edges}
+
+
+def get_learning_journey(student_id: int, db: Session) -> dict:
+    """
+    Build a chronological timeline of the student's learning events
+    across all topics and sessions.
+    """
+    from app.models.database import Session as SessionModel
+
+    sessions = db.query(SessionModel).filter(
+        SessionModel.student_id == student_id
+    ).order_by(SessionModel.started_at).all()
+
+    history = db.query(LearningHistory).filter(
+        LearningHistory.student_id == student_id
+    ).order_by(LearningHistory.created_at).all()
+
+    timeline = []
+
+    seen_session_keys = set()
+    for s in sessions:
+        key = (s.topic, s.started_at.replace(microsecond=0))
+        if key in seen_session_keys:
+            continue
+        seen_session_keys.add(key)
+        timeline.append({
+            "type": "session_start",
+            "topic": s.topic,
+            "timestamp": s.started_at.isoformat(),
+            "label": f"Started studying {s.topic}"
+        })
+
+    for h in history:
+        timeline.append({
+            "type": h.event_type,
+            "topic": h.topic,
+            "timestamp": h.created_at.isoformat(),
+            "label": h.description
+        })
+
+    timeline.sort(key=lambda x: x["timestamp"])
+
+    # Compute cumulative mastery trend per topic over time
+    topics_seen = {}
+    trend_points = []
+    for event in timeline:
+        topic = event["topic"]
+        if event["type"] == "breakthrough":
+            topics_seen[topic] = min(1.0, topics_seen.get(topic, 0.5) + 0.15)
+        elif event["type"] == "misconception":
+            topics_seen[topic] = max(0.0, topics_seen.get(topic, 0.5) - 0.05)
+        elif event["type"] == "struggle":
+            topics_seen[topic] = max(0.0, topics_seen.get(topic, 0.5) - 0.05)
+        else:
+            topics_seen.setdefault(topic, 0.5)
+
+        trend_points.append({
+            "timestamp": event["timestamp"],
+            "topic": topic,
+            "event": event["type"],
+            "estimated_mastery": round(topics_seen[topic], 2)
+        })
+
+    return {
+        "timeline": timeline,
+        "trend_points": trend_points,
+        "total_events": len(timeline)
     }

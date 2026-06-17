@@ -17,7 +17,7 @@ from app.services.memory_service import (
     record_learning_event
 )
 from app.services.knowledge_tracing import knowledge_tracer
-from app.services.adaptive_engine import generate_adaptive_question, get_session_analytics
+from app.services.adaptive_engine import generate_adaptive_question, get_session_analytics, get_concept_graph, get_learning_journey
 from app.services.evaluation import generate_full_evaluation_report, calculate_learning_gain
 
 router = APIRouter()
@@ -382,3 +382,14 @@ def session_analytics(session_id: int, db: Session = Depends(get_db)):
 def learning_gain(student_id: int, topic: str, db: Session = Depends(get_db)):
     """Calculate learning gain for a student on a topic."""
     return calculate_learning_gain(student_id, topic, db)
+
+@router.get("/concept-graph/{student_id}")
+def concept_graph(student_id: int, db: Session = Depends(get_db)):
+    """Get concept relationship graph with student mastery annotations."""
+    return get_concept_graph(student_id, db)
+
+
+@router.get("/learning-journey/{student_id}")
+def learning_journey(student_id: int, db: Session = Depends(get_db)):
+    """Get chronological learning journey timeline."""
+    return get_learning_journey(student_id, db)
