@@ -49,20 +49,38 @@ export default function DashboardPage() {
   const [deleting, setDeleting] = useState(false);
   
   useEffect(() => {
-    if (!studentId) return;
-    Promise.all([
-      api.get(`/subjects/${studentId}`),
-      api.get(`/dashboard/${studentId}/overview`),
-      api.get(`/dashboard/${studentId}/revision-queue`),
-    ])
-      .then(([subRes, ovRes, revRes]) => {
-        setSubjects(subRes.data);
-        setOverview(ovRes.data);
-        setRevisionQueue(revRes.data);
-      })
-      .catch(console.error)
-      .finally(() => setLoading(false));
-  }, [studentId]);
+  // 🟢 If studentId is not ready yet, wait (session still loading)
+  if (studentId === undefined) return;
+
+  // 🟢 NEW USER CASE → stop loading immediately
+  if (!studentId) {
+    setSubjects([]);
+    setOverview(null);
+    setRevisionQueue([]);
+    setLoading(false);
+    return;
+  }
+
+  Promise.all([
+    api.get(`/subjects/${studentId}`),
+    api.get(`/dashboard/${studentId}/overview`),
+    api.get(`/dashboard/${studentId}/revision-queue`),
+  ])
+    .then(([subRes, ovRes, revRes]) => {
+      setSubjects(subRes.data || []);
+      setOverview(ovRes.data || null);
+      setRevisionQueue(revRes.data || []);
+    })
+    .catch((err) => {
+      console.error("Dashboard load failed:", err);
+
+      // 🟢 IMPORTANT: unblock UI even if backend fails
+      setSubjects([]);
+      setOverview(null);
+      setRevisionQueue([]);
+    })
+    .finally(() => setLoading(false));
+}, [studentId]);
 
   const openSubject = (subject: SubjectSummary) => router.push(`/subject/${subject.id}`);
 
