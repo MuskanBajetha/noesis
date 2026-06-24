@@ -23,44 +23,29 @@ export default function KnowledgePage() {
   const [discovering, setDiscovering] = useState(false);
   const [stats, setStats] = useState({ subjects: 0, topics: 0, bridges: 0 });
   const [hoveredBridge, setHoveredBridge] = useState<GraphEdge | null>(null);
+  const [graphData, setGraphData] = useState<{ nodes: GraphNode[]; edges: GraphEdge[] } | null>(null);
 
   useEffect(() => {
     if (!studentId) return;
-
-    let latestNodes: GraphNode[] = [];
-    let latestEdges: GraphEdge[] = [];
-
     api.get(`/knowledge-graph/${studentId}`)
       .then((res) => {
-        latestNodes = res.data.nodes;
-        latestEdges = res.data.edges;
+        const nodes: GraphNode[] = res.data.nodes;
+        const edges: GraphEdge[] = res.data.edges;
         setStats({
-          subjects: latestNodes.filter((n) => n.kind === "subject").length,
-          topics: latestNodes.filter((n) => n.kind === "topic").length,
-          bridges: latestEdges.filter((e) => e.kind === "bridge").length,
+          subjects: nodes.filter((n) => n.kind === "subject").length,
+          topics: nodes.filter((n) => n.kind === "topic").length,
+          bridges: edges.filter((e) => e.kind === "bridge").length,
         });
-        // Only render if container already has dimensions
-        if (containerRef.current?.clientWidth) {
-          renderGraph(latestNodes, latestEdges);
-        }
+        setGraphData({ nodes, edges });
       })
       .catch(console.error)
       .finally(() => setLoading(false));
-
-    // ResizeObserver renders graph once container gets real dimensions
-    const observer = new ResizeObserver((entries) => {
-      for (const entry of entries) {
-        if (entry.contentRect.width > 0 && latestNodes.length > 0) {
-          renderGraph(latestNodes, latestEdges);
-          observer.disconnect(); // render once, don't loop
-        }
-      }
-    });
-
-    if (containerRef.current) observer.observe(containerRef.current);
-
-    return () => observer.disconnect();
   }, [studentId]);
+
+  useEffect(() => {
+    if (!graphData || !svgRef.current || !containerRef.current) return;
+    renderGraph(graphData.nodes, graphData.edges);
+  }, [graphData]);
 
   const handleDiscoverBridges = async () => {
     if (!studentId) return;
@@ -75,7 +60,7 @@ export default function KnowledgePage() {
         topics: nodes.filter((n) => n.kind === "topic").length,
         bridges: edges.filter((e) => e.kind === "bridge").length,
       });
-      renderGraph(nodes, edges);
+      setGraphData({ nodes, edges });
     } finally {
       setDiscovering(false);
     }
