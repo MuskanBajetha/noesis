@@ -1,6 +1,5 @@
 import os
 import chromadb
-from chromadb.config import Settings
 from sentence_transformers import SentenceTransformer
 from pypdf import PdfReader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
@@ -9,10 +8,7 @@ import hashlib
 
 load_dotenv()
 
-# ── Init embedding model & ChromaDB ─────────────────────
-
 embedding_model = SentenceTransformer("all-MiniLM-L6-v2")
-
 chroma_client = chromadb.PersistentClient(path="./chroma_db")
 
 collection = chroma_client.get_or_create_collection(
@@ -26,7 +22,6 @@ text_splitter = RecursiveCharacterTextSplitter(
     separators=["\n\n", "\n", ".", " "]
 )
 
-# ── PDF Processing ───────────────────────────────────────
 
 def extract_text_from_pdf(pdf_path: str) -> str:
     reader = PdfReader(pdf_path)
@@ -36,76 +31,86 @@ def extract_text_from_pdf(pdf_path: str) -> str:
     return text
 
 
-def process_and_store_pdf(pdf_path: str, topic: str) -> dict:
-    """Extract text from PDF, chunk it, embed and store in ChromaDB."""
-    print(f"Processing PDF: {pdf_path} for topic: {topic}")
-
+def process_and_store_pdf(pdf_path: str, subject_id: int, filename: str, document_id: int) -> dict:
+    """
+    Extract text from PDF, chunk it, embed, and store in ChromaDB,
+    tagged with both subject_id (broad scope) and document_id (fine-grained,
+    enables deleting just this document's chunks later without touching others).
+    """
     text = extract_text_from_pdf(pdf_path)
     if not text.strip():
         return {"status": "error", "message": "Could not extract text from PDF"}
 
     chunks = text_splitter.split_text(text)
-    print(f"Created {len(chunks)} chunks")
-
     embeddings = embedding_model.encode(chunks).tolist()
 
-    ids = []
-    documents = []
-    metadatas = []
-    embeds = []
-
+    ids, documents, metadatas, embeds = [], [], [], []
     for i, (chunk, embedding) in enumerate(zip(chunks, embeddings)):
-        chunk_id = hashlib.md5(f"{pdf_path}_{i}".encode()).hexdigest()
+        chunk_id = hashlib.md5(f"{document_id}_{i}".encode()).hexdigest()
         ids.append(chunk_id)
         documents.append(chunk)
-        metadatas.append({"topic": topic, "source": os.path.basename(pdf_path), "chunk_index": i})
+        metadatas.append({
+            "subject_id": str(subject_id),
+            "document_id": str(document_id),
+            "source": filename,
+            "chunk_index": i
+        })
         embeds.append(embedding)
 
-    collection.add(
-        ids=ids,
-        documents=documents,
-        metadatas=metadatas,
-        embeddings=embeds
-    )
+    collection.add(ids=ids, documents=documents, metadatas=metadatas, embeddings=embeds)
 
     return {
         "status": "success",
         "chunks_stored": len(chunks),
-        "topic": topic,
-        "source": os.path.basename(pdf_path)
+        "subject_id": subject_id,
+        "document_id": document_id,
+        "source": filename,
+        "full_text": text
     }
 
 
-def retrieve_context(query: str, topic: str = None, n_results: int = 3) -> str:
-    """Retrieve relevant chunks from ChromaDB for a given query."""
+def retrieve_context(query: str, subject_id: int, n_results: int = 3) -> str:
+    """Retrieve relevant chunks for a query, hard-scoped to one subject_id."""
     query_embedding = embedding_model.encode([query]).tolist()
-
-    where_filter = {"topic": topic} if topic else None
 
     try:
         results = collection.query(
             query_embeddings=query_embedding,
             n_results=n_results,
-            where=where_filter if where_filter else None
+            where={"subject_id": str(subject_id)}
         )
     except Exception:
-        results = collection.query(
-            query_embeddings=query_embedding,
-            n_results=n_results
-        )
+        return ""
 
     if not results["documents"] or not results["documents"][0]:
         return ""
 
-    context_parts = []
+    parts = []
     for doc, metadata in zip(results["documents"][0], results["metadatas"][0]):
-        source = metadata.get("source", "unknown")
-        context_parts.append(f"[Source: {source}]\n{doc}")
+        parts.append(f"[Source: {metadata.get('source', 'unknown')}]\n{doc}")
 
-    return "\n\n---\n\n".join(context_parts)
+    return "\n\n---\n\n".join(parts)
 
 
-def get_collection_stats() -> dict:
-    """Get stats about stored documents."""
-    count = collection.count()
-    return {"total_chunks": count}
+def get_subject_chunk_count(subject_id: int) -> int:
+    """Count chunks stored for a given subject — used to show upload status."""
+    try:
+        results = collection.get(where={"subject_id": str(subject_id)})
+        return len(results["ids"])
+    except Exception:
+        return 0
+
+
+def delete_subject_material(subject_id: int):
+    """Remove all chunks for a subject — used by the 'Replace material' flow."""
+    try:
+        collection.delete(where={"subject_id": str(subject_id)})
+    except Exception:
+        pass
+
+def delete_document_material(document_id: int):
+    """Remove only the chunks belonging to ONE document, leaving siblings intact."""
+    try:
+        collection.delete(where={"document_id": str(document_id)})
+    except Exception:
+        pass

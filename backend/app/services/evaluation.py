@@ -3,7 +3,7 @@ from groq import Groq
 from dotenv import load_dotenv
 import os
 from sqlalchemy.orm import Session
-from app.models.database import Answer, Question, MasteryScore, LearningHistory, Student
+from app.models.database import Answer, Question, MasteryScore, LearningHistory, Student, Topic, Subject
 
 load_dotenv()
 client = Groq(api_key=os.getenv("GROQ_API_KEY"))
@@ -51,15 +51,12 @@ Return only JSON:"""
         }
 
 
-def calculate_learning_gain(student_id: int, topic: str, db: Session) -> dict:
-    """
-    Calculate learning gain for a student on a topic.
-    Compares early vs recent performance.
-    """
+def calculate_learning_gain(student_id: int, topic_id: int, db: Session) -> dict:
+    """Compares early vs recent performance on ONE topic (by id, not name)."""
     answers = (
-        db.query(Answer, Question)
+        db.query(Answer)
         .join(Question, Answer.question_id == Question.id)
-        .filter(Question.topic == topic)
+        .filter(Question.topic_id == topic_id)
         .order_by(Answer.created_at)
         .all()
     )
@@ -72,11 +69,8 @@ def calculate_learning_gain(student_id: int, topic: str, db: Session) -> dict:
     early = answers[:len(answers)//2]
     recent = answers[len(answers)//2:]
 
-    early_score = sum(score_map.get(a.understanding_level or "partial", 0.33)
-                     for a, _ in early) / len(early)
-    recent_score = sum(score_map.get(a.understanding_level or "partial", 0.33)
-                      for a, _ in recent) / len(recent)
-
+    early_score = sum(score_map.get(a.understanding_level or "partial", 0.33) for a in early) / len(early)
+    recent_score = sum(score_map.get(a.understanding_level or "partial", 0.33) for a in recent) / len(recent)
     gain = recent_score - early_score
 
     return {
@@ -88,74 +82,75 @@ def calculate_learning_gain(student_id: int, topic: str, db: Session) -> dict:
     }
 
 
-def generate_full_evaluation_report(student_id: int, db: Session) -> dict:
-    """
-    Generate a complete evaluation report for a student.
-    """
+def generate_full_evaluation_report(student_id: int, db: Session, subject_id: int = None) -> dict:
+    """Full report, optionally scoped to one subject so subjects never blend in the numbers."""
     student = db.query(Student).filter(Student.id == student_id).first()
     if not student:
         return {"error": "Student not found"}
 
-    mastery_scores = db.query(MasteryScore).filter(
-        MasteryScore.student_id == student_id
-    ).all()
+    topics_q = db.query(Topic)
+    if subject_id:
+        topics_q = topics_q.filter(Topic.subject_id == subject_id)
+        relevant_topic_ids = [t.id for t in topics_q.all()]
+        mastery_scores = db.query(MasteryScore).filter(
+            MasteryScore.student_id == student_id,
+            MasteryScore.topic_id.in_(relevant_topic_ids)
+        ).all() if relevant_topic_ids else []
+        history = db.query(LearningHistory).filter(
+            LearningHistory.student_id == student_id,
+            LearningHistory.subject_id == subject_id
+        ).all()
+    else:
+        mastery_scores = db.query(MasteryScore).filter(MasteryScore.student_id == student_id).all()
+        history = db.query(LearningHistory).filter(LearningHistory.student_id == student_id).all()
 
-    history = db.query(LearningHistory).filter(
-        LearningHistory.student_id == student_id
-    ).all()
+    topic_id_to_name = {t.id: t.name for t in db.query(Topic).all()}
 
-    # Learning gains per topic
     learning_gains = {}
     for m in mastery_scores:
-        gain = calculate_learning_gain(student_id, m.topic, db)
-        learning_gains[m.topic] = gain
+        gain = calculate_learning_gain(student_id, m.topic_id, db)
+        learning_gains[topic_id_to_name.get(m.topic_id, "Unknown")] = gain
 
-    # Misconception reduction
     misconceptions = [h for h in history if h.event_type == "misconception"]
     breakthroughs = [h for h in history if h.event_type == "breakthrough"]
 
-    # Overall metrics
-    total_questions = db.query(Answer).join(
-        Question, Answer.question_id == Question.id
-    ).count()
+    topic_ids_for_count = [m.topic_id for m in mastery_scores]
+    total_questions = db.query(Answer).join(Question, Answer.question_id == Question.id).filter(
+        Question.topic_id.in_(topic_ids_for_count)
+    ).count() if topic_ids_for_count else 0
 
     avg_mastery = sum(m.score for m in mastery_scores) / len(mastery_scores) if mastery_scores else 0
 
-    # Education metrics
     education_metrics = {
         "avg_mastery": round(avg_mastery, 2),
         "topics_studied": len(mastery_scores),
         "total_questions_answered": total_questions,
         "total_misconceptions": len(misconceptions),
         "total_breakthroughs": len(breakthroughs),
-        "misconception_to_breakthrough_ratio": round(
-            len(misconceptions) / max(len(breakthroughs), 1), 2
-        ),
-        "session_completion_rate": 1.0,
+        "misconception_to_breakthrough_ratio": round(len(misconceptions) / max(len(breakthroughs), 1), 2),
     }
 
-    # Topic performance
     topic_performance = []
     for m in mastery_scores:
-        gain_data = learning_gains.get(m.topic, {})
+        topic_name = topic_id_to_name.get(m.topic_id, "Unknown")
+        gain_data = learning_gains.get(topic_name, {})
         topic_performance.append({
-            "topic": m.topic,
+            "topic": topic_name,
             "mastery": round(m.score, 2),
             "questions_attempted": m.questions_attempted,
             "misconceptions": m.misconceptions_count,
             "learning_gain": gain_data.get("learning_gain", 0),
             "trend": gain_data.get("trend", "insufficient_data")
         })
-
     topic_performance.sort(key=lambda x: x["mastery"], reverse=True)
 
     return {
         "student_name": student.name,
         "student_id": student_id,
+        "subject_id": subject_id,
         "generated_at": __import__("datetime").datetime.utcnow().isoformat(),
         "education_metrics": education_metrics,
         "topic_performance": topic_performance,
-        "learning_gains": learning_gains,
         "strengths": [t for t in topic_performance if t["mastery"] >= 0.7],
         "areas_for_improvement": [t for t in topic_performance if t["mastery"] < 0.4],
     }
