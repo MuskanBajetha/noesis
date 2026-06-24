@@ -2,6 +2,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.api.tutor import router as tutor_router
 from app.models.database import init_db
+import os
 
 app = FastAPI(
     title="Socratic Tutor API",
@@ -9,9 +10,11 @@ app = FastAPI(
     version="1.0.0"
 )
 
+FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:3000")
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000"],
+    allow_origins=[FRONTEND_URL, "http://localhost:3000"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
