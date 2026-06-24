@@ -1,6 +1,6 @@
 import os
 import chromadb
-from sentence_transformers import SentenceTransformer
+from google import genai as google_genai
 from pypdf import PdfReader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from dotenv import load_dotenv
@@ -8,8 +8,44 @@ import hashlib
 
 load_dotenv()
 
-embedding_model = SentenceTransformer("all-MiniLM-L6-v2")
+_gemini_client = google_genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
 chroma_client = chromadb.PersistentClient(path="./chroma_db")
+
+
+from google.genai import types as google_types
+
+def embed_texts(texts: list[str], batch_size: int = 90) -> list[list[float]]:
+    """
+    Embeds texts via Gemini, batched in groups of up to `batch_size` per
+    API call (NOT one call per text). A single call costs 1 request against
+    the RPM quota regardless of how many texts are inside `contents`, so a
+    9-page PDF with ~80 chunks should cost ~1 request total, not ~80.
+    `batch_size` is capped below Gemini's practical per-call limit as a
+    safety margin for very large documents.
+    """
+    all_embeddings: list[list[float]] = []
+
+    for i in range(0, len(texts), batch_size):
+        batch = texts[i:i + batch_size]
+        result = _gemini_client.models.embed_content(
+            model="gemini-embedding-001",
+            contents=batch,
+            config=google_types.EmbedContentConfig(task_type="RETRIEVAL_DOCUMENT"),
+        )
+        all_embeddings.extend([e.values for e in result.embeddings])
+
+    return all_embeddings
+
+
+def embed_query(text: str) -> list[float]:
+    """Same embedding space as embed_texts, single query string, tagged
+    as a query rather than a document for slightly better retrieval matching."""
+    result = _gemini_client.models.embed_content(
+        model="gemini-embedding-001",
+        contents=[text],
+        config=google_types.EmbedContentConfig(task_type="RETRIEVAL_QUERY"),
+    )
+    return result.embeddings[0].values
 
 collection = chroma_client.get_or_create_collection(
     name="learning_materials",
@@ -42,7 +78,7 @@ def process_and_store_pdf(pdf_path: str, subject_id: int, filename: str, documen
         return {"status": "error", "message": "Could not extract text from PDF"}
 
     chunks = text_splitter.split_text(text)
-    embeddings = embedding_model.encode(chunks).tolist()
+    embeddings = embed_texts(chunks)
 
     ids, documents, metadatas, embeds = [], [], [], []
     for i, (chunk, embedding) in enumerate(zip(chunks, embeddings)):
@@ -71,7 +107,7 @@ def process_and_store_pdf(pdf_path: str, subject_id: int, filename: str, documen
 
 def retrieve_context(query: str, subject_id: int, n_results: int = 3) -> str:
     """Retrieve relevant chunks for a query, hard-scoped to one subject_id."""
-    query_embedding = embedding_model.encode([query]).tolist()
+    query_embedding = [embed_query(query)]
 
     try:
         results = collection.query(
