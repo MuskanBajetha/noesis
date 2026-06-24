@@ -60,15 +60,39 @@ export default function LearningSetupContent() {
     }
   }, [studentId]);
 
+  useEffect(() => {
+    if (studentId) {
+        localStorage.setItem("student_id", String(studentId));
+    }
+  }, [studentId]);
+
   const createCustomSubject = async () => {
-    if (!subjectName.trim() || !studentId) return;
-    const res = await api.post("/subjects/custom", { student_id: studentId, name: subjectName.trim() });
-    setSubjectId(res.data.subject_id);
-    setStep("custom-upload");
-  };
+    const activeId = studentId || localStorage.getItem("student_id");
+
+    if (!subjectName.trim()) return;
+
+    if (!activeId) {
+        alert("Profile still initializing. Please wait a second.");
+        return;
+    }
+
+    try {
+        const res = await api.post("/subjects/custom", {
+        student_id: activeId,
+        name: subjectName.trim(),
+        });
+
+        setSubjectId(res.data.subject_id);
+        setStep("custom-upload");
+    } catch (err) {
+        console.error(err);
+        alert("Failed to create subject.");
+    }
+    };
 
   const uploadMaterial = async () => {
-    if (!file || !subjectId) return;
+    const activeId = subjectId || localStorage.getItem("subject_id");
+    if (!file || !activeId) return;
     setUploading(true);
     const formData = new FormData();
     formData.append("file", file);
@@ -101,15 +125,29 @@ export default function LearningSetupContent() {
   }, [step]);
 
   const choosePrebuilt = async (domain: PrebuiltDomain) => {
-    if (!studentId) return;
-    setCreatingDomain(domain.id);
-    try {
-      const res = await api.post("/subjects/prebuilt", { student_id: studentId, prebuilt_domain_id: domain.id });
-      router.push(`/subject/${res.data.subject_id}`);
-    } finally {
-      setCreatingDomain(null);
+    const activeId = studentId || localStorage.getItem("student_id");
+
+    if (!activeId) {
+        alert("Please wait a moment while your profile loads...");
+        return;
     }
-  };
+
+    setCreatingDomain(domain.id);
+
+    try {
+        const res = await api.post("/subjects/prebuilt", {
+        student_id: activeId,
+        prebuilt_domain_id: domain.id,
+        });
+
+        router.push(`/subject/${res.data.subject_id}`);
+    } catch (err) {
+        console.error(err);
+        alert("Failed to create subject. Try again.");
+    } finally {
+        setCreatingDomain(null);
+    }
+    };
 
   const Header = ({ title, onBack }: { title: string; onBack: () => void }) => (
     <div className="flex items-center gap-3 mb-8">
