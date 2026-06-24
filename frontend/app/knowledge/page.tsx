@@ -26,19 +26,40 @@ export default function KnowledgePage() {
 
   useEffect(() => {
     if (!studentId) return;
+
+    let latestNodes: GraphNode[] = [];
+    let latestEdges: GraphEdge[] = [];
+
     api.get(`/knowledge-graph/${studentId}`)
       .then((res) => {
-        const nodes: GraphNode[] = res.data.nodes;
-        const edges: GraphEdge[] = res.data.edges;
+        latestNodes = res.data.nodes;
+        latestEdges = res.data.edges;
         setStats({
-          subjects: nodes.filter((n) => n.kind === "subject").length,
-          topics: nodes.filter((n) => n.kind === "topic").length,
-          bridges: edges.filter((e) => e.kind === "bridge").length,
+          subjects: latestNodes.filter((n) => n.kind === "subject").length,
+          topics: latestNodes.filter((n) => n.kind === "topic").length,
+          bridges: latestEdges.filter((e) => e.kind === "bridge").length,
         });
-        renderGraph(nodes, edges);
+        // Only render if container already has dimensions
+        if (containerRef.current?.clientWidth) {
+          renderGraph(latestNodes, latestEdges);
+        }
       })
       .catch(console.error)
       .finally(() => setLoading(false));
+
+    // ResizeObserver renders graph once container gets real dimensions
+    const observer = new ResizeObserver((entries) => {
+      for (const entry of entries) {
+        if (entry.contentRect.width > 0 && latestNodes.length > 0) {
+          renderGraph(latestNodes, latestEdges);
+          observer.disconnect(); // render once, don't loop
+        }
+      }
+    });
+
+    if (containerRef.current) observer.observe(containerRef.current);
+
+    return () => observer.disconnect();
   }, [studentId]);
 
   const handleDiscoverBridges = async () => {
