@@ -47,9 +47,19 @@ def embed_query(text: str) -> list[float]:
     )
     return result.embeddings[0].values
 
+# One-time migration: delete old 384-dim collection if it exists with wrong dims
+try:
+    existing = chroma_client.get_collection("learning_materials")
+    sample = existing.get(limit=1, include=["embeddings"])
+    if sample["embeddings"] and len(sample["embeddings"][0]) != 3072:
+        chroma_client.delete_collection("learning_materials")
+        print("Deleted stale collection with wrong embedding dimensions")
+except Exception:
+    pass  # Collection doesn't exist yet, that's fine
+
 collection = chroma_client.get_or_create_collection(
     name="learning_materials",
-    metadata={"heuristic": "cosine"}
+    metadata={"hnsw:space": "cosine"}  # correct metadata key
 )
 
 text_splitter = RecursiveCharacterTextSplitter(
