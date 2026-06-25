@@ -26,6 +26,18 @@ _gemini_client = google_genai.Client(api_key=sanitized_key)
 chroma_client = chromadb.PersistentClient(path="./chroma_db")
 
 
+print("KEY EXISTS:", bool(sanitized_key))
+print("KEY PREFIX:", sanitized_key[:8] if sanitized_key else None)
+
+try:
+    test = _gemini_client.models.embed_content(
+        model="gemini-embedding-001",
+        contents=["hello"]
+    )
+    print("EMBED TEST SUCCESS")
+except Exception as e:
+    print("EMBED TEST FAILED:", repr(e))
+
 # Simple in-memory cache for query embeddings
 _query_cache: dict[str, list[float]] = {}
 
@@ -82,15 +94,16 @@ def embed_texts(texts: list[str], batch_size: int = 90) -> list[list[float]]:
 
 
 def embed_query(text: str) -> list[float]:
-    # Return cached embedding if we've seen this query before
     if text in _query_cache:
         return _query_cache[text]
 
     def _call():
         result = _gemini_client.models.embed_content(
             model="gemini-embedding-001",
-            contents=[text],
-            config=google_types.EmbedContentConfig(task_type="RETRIEVAL_QUERY"),
+            contents=text,  # changed
+            config=google_types.EmbedContentConfig(
+                task_type="RETRIEVAL_QUERY"
+            ),
         )
         return result.embeddings[0].values
 
