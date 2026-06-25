@@ -778,3 +778,14 @@ def update_session_preferences(request: UpdatePreferencesRequest, db: Session = 
     session.visual_aid_preferences = [a for a in request.visual_aid_preferences if a in valid_aids]
     db.commit()
     return {"session_id": session.id, "visual_aid_preferences": session.visual_aid_preferences}
+
+@router.get("/debug/gemini-models")
+def debug_gemini_models():
+    import os
+    from google import genai as google_genai
+    try:
+        client = google_genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
+        models = list(client.models.list())
+        return {"status": "ok", "models": [m.name for m in models]}
+    except Exception as e:
+        return {"status": "error", "error": repr(e)}
