@@ -10,17 +10,21 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-# --- DIAGNOSTIC LOG START ---
+# Fetch the raw key string from Render
 raw_key = os.getenv("GEMINI_API_KEY")
-if raw_key:
-    # Print the length and first 5 characters safely to logs (e.g. AIzaS)
-    print(f"DEBUG_KEY_CHECK: Key found! Length: {len(raw_key)}, Starts with: {raw_key[:5]}")
-else:
-    print("DEBUG_KEY_CHECK: CRITICAL ERROR! GEMINI_API_KEY is completely empty or None inside Render.")
-# --- DIAGNOSTIC LOG END ---
 
-_gemini_client = google_genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
+if raw_key:
+    # .strip() completely wipes out hidden spaces, \n, or \r invisible characters
+    sanitized_key = raw_key.strip()
+    print(f"DEBUG_KEY_CHECK: Key sanitized! Length: {len(sanitized_key)}")
+else:
+    sanitized_key = None
+    print("DEBUG_KEY_CHECK: CRITICAL ERROR! GEMINI_API_KEY is empty inside Render.")
+
+# Pass the sanitized key to the Google GenAI Client
+_gemini_client = google_genai.Client(api_key=sanitized_key)
 chroma_client = chromadb.PersistentClient(path="./chroma_db")
+
 
 # Simple in-memory cache for query embeddings
 _query_cache: dict[str, list[float]] = {}
