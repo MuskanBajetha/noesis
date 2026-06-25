@@ -30,13 +30,22 @@ print("KEY EXISTS:", bool(sanitized_key))
 print("KEY PREFIX:", sanitized_key[:8] if sanitized_key else None)
 
 try:
-    test = _gemini_client.models.embed_content(
-        model="gemini-embedding-001",
-        contents=["hello"]
+    response = _gemini_client.models.generate_content(
+        model="gemini-2.5-flash",
+        contents="Say hello"
     )
-    print("EMBED TEST SUCCESS")
+    print("GENERATION WORKS")
 except Exception as e:
-    print("EMBED TEST FAILED:", repr(e))
+    print("GENERATION FAILED:", repr(e))
+
+try:
+    response = _gemini_client.models.embed_content(
+        model="gemini-embedding-001",
+        contents="hello"
+    )
+    print("EMBEDDING WORKS")
+except Exception as e:
+    print("EMBEDDING FAILED:", repr(e))
 
 # Simple in-memory cache for query embeddings
 _query_cache: dict[str, list[float]] = {}
