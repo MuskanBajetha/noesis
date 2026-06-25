@@ -10,6 +10,15 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+# --- DIAGNOSTIC LOG START ---
+raw_key = os.getenv("GEMINI_API_KEY")
+if raw_key:
+    # Print the length and first 5 characters safely to logs (e.g. AIzaS)
+    print(f"DEBUG_KEY_CHECK: Key found! Length: {len(raw_key)}, Starts with: {raw_key[:5]}")
+else:
+    print("DEBUG_KEY_CHECK: CRITICAL ERROR! GEMINI_API_KEY is completely empty or None inside Render.")
+# --- DIAGNOSTIC LOG END ---
+
 _gemini_client = google_genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
 chroma_client = chromadb.PersistentClient(path="./chroma_db")
 
