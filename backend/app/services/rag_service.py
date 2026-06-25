@@ -25,7 +25,7 @@ else:
 _gemini_client = google_genai.Client(api_key=sanitized_key)
 chroma_client = chromadb.PersistentClient(path="./chroma_db")
 
-
+print("GOOGLE GENAI VERSION:", google_genai.__version__)
 print("KEY EXISTS:", bool(sanitized_key))
 print("KEY PREFIX:", sanitized_key[:8] if sanitized_key else None)
 
