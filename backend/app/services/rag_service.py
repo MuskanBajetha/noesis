@@ -21,16 +21,8 @@ else:
     sanitized_key = None
     print("DEBUG_KEY_CHECK: CRITICAL ERROR! GEMINI_API_KEY is empty inside Render.")
 
-PROXY_URL = "https://gemini-api-proxy.muskanbajetha1318.workers.dev"
-
-_gemini_client = google_genai.Client(
-    api_key=sanitized_key,
-    http_options=google_types.HttpOptions(
-        base_url=PROXY_URL
-    )
-)
-
-
+# Pass the sanitized key to the Google GenAI Client
+_gemini_client = google_genai.Client(api_key=sanitized_key)
 chroma_client = chromadb.PersistentClient(path="./chroma_db")
 
 print("GOOGLE GENAI VERSION:", google_genai.__version__)
