@@ -5,7 +5,7 @@
 **Live demo:** [noesis-frontend-vh1q.onrender.com](https://noesis-frontend-vh1q.onrender.com)
 
 **Demo video:** 
-[![Watch Demo](assets/thumbnail.png)](assets/noesis_demo.mp4)
+[![Watch Demo](assets/thumbnail.png)](https://drive.google.com/file/d/1YW6oDMYRB6njY6FNBLXA51JDJvowuCZ2/view?usp=sharing)
 
 ---
 
