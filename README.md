@@ -4,7 +4,8 @@
 
 **Live demo:** [noesis-frontend-vh1q.onrender.com](https://noesis-frontend-vh1q.onrender.com)
 
-**Demo video:** [add your video link here]
+**Demo video:** 
+[![Watch Demo](assets/thumbnail.png)](assets/noesis_demo.mp4)
 
 ---
 
